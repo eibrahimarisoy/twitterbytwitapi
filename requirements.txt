@@ -1,0 +1,6 @@
+Flask
+postgresql postgresql-contrib
+flask-SQLAlchemy
+base64
+requests
+json
