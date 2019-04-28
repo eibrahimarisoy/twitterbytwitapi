@@ -1,8 +1,10 @@
-import json
-import requests
 import base64
+import json
+import logging
+import requests
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
+from logging.config import fileConfig
 
 
 app = Flask(__name__)
@@ -17,26 +19,29 @@ API_NAME = config['api_name']
 
 client_key = config['CONSUMER_KEY']
 client_secret = config['CONSUMER_SECRET']
-key_secret = '{}:{}'.format(client_key, client_secret).encode('ascii')
+key_secret = f'{client_key}:{client_secret}'.encode('ascii')
 b64_encoded_key = base64.b64encode(key_secret)
 b64_encoded_key = b64_encoded_key.decode('ascii')
 BEARER_TOKEN = ""
+
+logging.config.fileConfig('logging.conf', disable_existing_loggers=False)
+app.logger = logging.getLogger()
 
 
 def get_validate_token():
     global BEARER_TOKEN
     base_url = 'https://api.twitter.com/'
-    auth_url = '{}oauth2/token'.format(base_url)
+    auth_url = f'{base_url}oauth2/token'
     auth_headers = {
-        'Authorization': 'Basic {}'.format(b64_encoded_key),
+        'Authorization': f'Basic {b64_encoded_key}',
         'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
     }
     auth_data = {
         'grant_type': 'client_credentials'
     }
     auth_resp = requests.post(auth_url, headers=auth_headers, data=auth_data)
-    access_token = auth_resp.json()['access_token']
-    BEARER_TOKEN = access_token
+    BEARER_TOKEN = auth_resp.json()['access_token']
+    app.logger.info('getting_validate_token successfull')
 
 
 class Tweet(db.Model):
@@ -84,20 +89,20 @@ class Tweet_Url(db.Model):
 
 def get_standart_search_tweets():
     base_url = 'https://api.twitter.com/1.1/'
-    auth_url = '{}search/tweets.json'.format(base_url)
+    auth_url = f'{base_url}search/tweets.json'
 
     auth_headers = {
-        'Authorization': 'Bearer {}'.format(BEARER_TOKEN),
+        'Authorization': f'Bearer {BEARER_TOKEN}',
     }
 
     data = {
-        'q': 'istanbul',
+        'q': 'fenerbahçe',
         'geocode': '',
         'lang': 'tr',
         'locale': '',
         'result_type': 'popular',
         'count': 15,
-        'until': '2019-04-19',
+        'until': '2019-04-25',
         'since_id': '',
         'max_id': '',
         'include_entities': True
@@ -105,44 +110,28 @@ def get_standart_search_tweets():
 
     get_tweets = requests.get(auth_url, headers=auth_headers, params=data)
     items = json.loads(get_tweets.content)
-
+    print(items)
     for item in items['statuses']:
-        tweet_created_at = item['created_at']
-        tweet_text = item['text']
-        tweet_id = item['id_str']
-        tweet_result_type = item['metadata']['result_type']
-        tweet_geo = item['geo']
-        tweet_coordinates = item['coordinates']
-        tweet_retweet_count = item['retweet_count']
-        tweet_favorite_count = item['favorite_count']
-        tweet_lang = item['lang']
-        user_id = item['user']['id']
-        user_name = item['user']['name']
-        user_screenname = item['user']['screen_name']
-        user_location = item['user']['location']
-        user_followers_count = item['user']['followers_count']
-        user_friends_count = item['user']['friends_count']
-        user_statuses_count = item['user']['statuses_count']
-        user_lang = item['user']['lang']
 
-        tweet = Tweet(tweet_created_at=tweet_created_at, tweet_id=tweet_id,
-                      tweet_text=tweet_text, tweet_result_type=tweet_result_type,
-                      tweet_geo=tweet_geo, tweet_coordinates=tweet_coordinates,
-                      tweet_retweet_count=tweet_retweet_count,
-                      tweet_favorite_count=tweet_favorite_count, tweet_lang=tweet_lang,
-                      user_id=user_id, user_name=user_name, user_screenname=user_screenname,
-                      user_location=user_location, user_followers_count=user_followers_count,
-                      user_friends_count=user_friends_count, user_statuses_count=user_statuses_count,
-                      user_lang=user_lang)
+        tweet_id = item['id_str']
+        tweet = Tweet(tweet_created_at=item['created_at'], tweet_id=item['id_str'],
+                      tweet_text=item['text'], tweet_result_type=item['metadata']['result_type'],
+                      tweet_geo=item['geo'], tweet_coordinates=item['coordinates'],
+                      tweet_retweet_count=item['retweet_count'],
+                      tweet_favorite_count=item['favorite_count'], tweet_lang=item['lang'],
+                      user_id=item['user']['id'], user_name=item['user']['name'],
+                      user_screenname=item['user']['screen_name'], user_location=item['user']['location'],
+                      user_followers_count=item['user']['followers_count'], user_friends_count=item['user']['friends_count'],
+                      user_statuses_count=item['user']['statuses_count'], user_lang=item['user']['lang'])
         db.session.add(tweet)
 
-        if (item['entities']['hashtags']):
+        if item['entities']['hashtags']:
             for i in item['entities']['hashtags']:
                 hashtag = i['text']
                 hashtags = Tweet_Hashtag(tweet_id=tweet_id, hashtags=hashtag)
                 db.session.add(hashtags)
 
-        if (item['entities']['urls']):
+        if item['entities']['urls']:
             for i in item['entities']['urls']:
                 url = i['url']
                 expanded_url = i['expanded_url']
@@ -152,6 +141,7 @@ def get_standart_search_tweets():
                 db.session.add(urls)
 
     db.session.commit()
+    app.logger.info('getting_standart_tweets successfull')
 
 
 if __name__:

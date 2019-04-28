@@ -1,6 +1,6 @@
-Flask
+Flask==1.0.2
 postgresql postgresql-contrib
-flask-SQLAlchemy
-base64
-requests
+flask-SQLAlchemy==2.3.2
+base64==8.28
+requests==2.18.4
 json
