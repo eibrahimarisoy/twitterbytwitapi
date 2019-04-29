@@ -96,13 +96,13 @@ def get_standart_search_tweets():
     }
 
     data = {
-        'q': 'fenerbahçe',
+        'q': 'galatasaray',
         'geocode': '',
         'lang': 'tr',
         'locale': '',
         'result_type': 'popular',
         'count': 15,
-        'until': '2019-04-25',
+        'until': '2019-04-27',
         'since_id': '',
         'max_id': '',
         'include_entities': True
@@ -110,10 +110,13 @@ def get_standart_search_tweets():
 
     get_tweets = requests.get(auth_url, headers=auth_headers, params=data)
     items = json.loads(get_tweets.content)
-    print(items)
+
     for item in items['statuses']:
 
         tweet_id = item['id_str']
+        if Tweet.query.filter_by(tweet_id=tweet_id).first():
+            app.logger.warn(f'{tweet_id} tweet id sine sahip yinelenen kayıt')
+            continue
         tweet = Tweet(tweet_created_at=item['created_at'], tweet_id=item['id_str'],
                       tweet_text=item['text'], tweet_result_type=item['metadata']['result_type'],
                       tweet_geo=item['geo'], tweet_coordinates=item['coordinates'],
