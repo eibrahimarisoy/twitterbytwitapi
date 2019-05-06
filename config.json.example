@@ -1,7 +1,0 @@
-
-{
-  "api_name": "TwitterByTwitApi",
-  "db_connection_string": "postgresql://username:password@host/database",
-  "CONSUMER_KEY":"Twitter_Developer_Account_Consumer_Key",
-  "CONSUMER_SECRET":"Twitter_Developer_Account_Consumer_Secret",
-}

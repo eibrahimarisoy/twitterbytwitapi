@@ -1,24 +1,27 @@
 import base64
 import json
+import os
 import logging
 import requests
+from dotenv import load_dotenv
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from logging.config import fileConfig
 
 
 app = Flask(__name__)
-config = json.load(open('config.json', 'r'))
-app.config['SECRET_KEY'] = config['secret_key']
-app.config['SQLALCHEMY_DATABASE_URI'] = config['db_connection_string']
+load_dotenv()
+
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DB_CONNECTION_STRING')
 app.config['SQLALCHEMY_COMMIT_ON_TEARDOWN'] = True
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
 
 db = SQLAlchemy(app)
-API_NAME = config['api_name']
+API_NAME = os.environ.get('API_NAME')
 
-client_key = config['CONSUMER_KEY']
-client_secret = config['CONSUMER_SECRET']
+client_key = os.environ.get('CONSUMER_KEY')
+client_secret = os.environ.get('CONSUMER_SECRET')
 key_secret = f'{client_key}:{client_secret}'.encode('ascii')
 b64_encoded_key = base64.b64encode(key_secret)
 b64_encoded_key = b64_encoded_key.decode('ascii')
@@ -87,7 +90,35 @@ class Tweet_Url(db.Model):
     display_url = db.Column(db.Text)
 
 
-def get_standart_search_tweets():
+def add_Tweet(item, tweet_id):
+
+    tweet = Tweet(tweet_created_at=item['created_at'], tweet_id=tweet_id,
+                  tweet_text=item['text'], tweet_result_type=item['metadata']['result_type'],
+                  tweet_geo=item['geo'], tweet_coordinates=item['coordinates'],
+                  tweet_retweet_count=item['retweet_count'],
+                  tweet_favorite_count=item['favorite_count'], tweet_lang=item['lang'],
+                  user_id=item['user']['id'], user_name=item['user']['name'],
+                  user_screenname=item['user']['screen_name'], user_location=item['user']['location'],
+                  user_followers_count=item['user']['followers_count'], user_friends_count=item['user']['friends_count'],
+                  user_statuses_count=item['user']['statuses_count'], user_lang=item['user']['lang'])
+    db.session.add(tweet)
+
+
+def add_Hashtag(item, tweet_id):
+    for i in item['entities']['hashtags']:
+        hashtags = Tweet_Hashtag(tweet_id=tweet_id, hashtags=i['text'])
+        db.session.add(hashtags)
+
+
+def add_Url(item, tweet_id):
+    for i in item['entities']['urls']:
+        urls = Tweet_Url(tweet_id=tweet_id, url=i['url'], expanded_url=i['expanded_url'],
+                         display_url=i['display_url'])
+        db.session.add(urls)
+
+
+def get_standart_search_tweets(q='', geocode='', lang='', locale='', result_type='',
+                               count=15, until='', since_id='', max_id=''):
     base_url = 'https://api.twitter.com/1.1/'
     auth_url = f'{base_url}search/tweets.json'
 
@@ -96,15 +127,15 @@ def get_standart_search_tweets():
     }
 
     data = {
-        'q': 'galatasaray',
-        'geocode': '',
-        'lang': 'tr',
-        'locale': '',
-        'result_type': 'popular',
-        'count': 15,
-        'until': '2019-04-27',
-        'since_id': '',
-        'max_id': '',
+        'q': q,
+        'geocode': geocode,
+        'lang': lang,
+        'locale': locale,
+        'result_type': result_type,
+        'count': count,
+        'until': until,
+        'since_id': since_id,
+        'max_id': max_id,
         'include_entities': True
     }
 
@@ -112,36 +143,17 @@ def get_standart_search_tweets():
     items = json.loads(get_tweets.content)
 
     for item in items['statuses']:
-
         tweet_id = item['id_str']
         if Tweet.query.filter_by(tweet_id=tweet_id).first():
-            app.logger.warn(f'{tweet_id} tweet id sine sahip yinelenen kayıt')
-            continue
-        tweet = Tweet(tweet_created_at=item['created_at'], tweet_id=item['id_str'],
-                      tweet_text=item['text'], tweet_result_type=item['metadata']['result_type'],
-                      tweet_geo=item['geo'], tweet_coordinates=item['coordinates'],
-                      tweet_retweet_count=item['retweet_count'],
-                      tweet_favorite_count=item['favorite_count'], tweet_lang=item['lang'],
-                      user_id=item['user']['id'], user_name=item['user']['name'],
-                      user_screenname=item['user']['screen_name'], user_location=item['user']['location'],
-                      user_followers_count=item['user']['followers_count'], user_friends_count=item['user']['friends_count'],
-                      user_statuses_count=item['user']['statuses_count'], user_lang=item['user']['lang'])
-        db.session.add(tweet)
+            app.logger.warn(f'{tweet_id} id sine sahip yinelenen kayıt')
+            break
+        add_Tweet(item, tweet_id)
 
         if item['entities']['hashtags']:
-            for i in item['entities']['hashtags']:
-                hashtag = i['text']
-                hashtags = Tweet_Hashtag(tweet_id=tweet_id, hashtags=hashtag)
-                db.session.add(hashtags)
+            add_Hashtag(item, tweet_id)
 
         if item['entities']['urls']:
-            for i in item['entities']['urls']:
-                url = i['url']
-                expanded_url = i['expanded_url']
-                display_url = i['display_url']
-                urls = Tweet_Url(tweet_id=tweet_id, url=url, expanded_url=expanded_url,
-                                 display_url=display_url)
-                db.session.add(urls)
+            add_Url(item, tweet_id)
 
     db.session.commit()
     app.logger.info('getting_standart_tweets successfull')
@@ -149,5 +161,6 @@ def get_standart_search_tweets():
 
 if __name__:
     get_validate_token()
-    get_standart_search_tweets()
+    get_standart_search_tweets(q='seçim', lang='tr', result_type='popular',
+                               until='2019-05-06')
     app.run()

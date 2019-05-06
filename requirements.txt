@@ -1,6 +1,5 @@
 Flask==1.0.2
-postgresql postgresql-contrib
+psycopg2-binary
 flask-SQLAlchemy==2.3.2
-base64==8.28
 requests==2.18.4
-json
+python-dotenv==0.10.1
