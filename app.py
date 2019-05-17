@@ -3,6 +3,7 @@ import json
 import os
 import logging
 import requests
+from datetime import date
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
@@ -186,6 +187,10 @@ def standart_search_tweets():
     base_url = 'https://api.twitter.com/1.1/'
     auth_url = f'{base_url}search/tweets.json'
     auth_headers = {'Authorization': f'Bearer {BEARER_TOKEN}'}
+    until = request.json.get('until')
+    if not until:
+        until=str(date.today())
+    
     data = {
         'q': request.json.get('q'),
         'geocode': request.json.get('geocode'),
@@ -193,7 +198,7 @@ def standart_search_tweets():
         'locale': request.json.get('locale'),
         'result_type': request.json.get('result_type'),
         'count': request.json.get('count'),
-        'until': request.json.get('until'),
+        'until': until,
         'since_id': request.json.get('since_id'),
         'max_id': request.json.get('max_id'),
         'include_entities': True,
