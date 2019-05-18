@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
 from logging.config import fileConfig
-
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 load_dotenv()
@@ -118,6 +118,21 @@ class Tweet_Url(db.Model):
     url = db.Column(db.Text)
     expanded_url = db.Column(db.Text)
     display_url = db.Column(db.Text)
+
+
+class User(db.Model):
+    __tablename__ = 'User'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(80), nullable=False)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password = db.Column(db.String(120))
+
+    def set_password(self, password):
+        self.pw_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        return check_password_hash(self.pw_hash, password)
 
 
 def add_Tweet(item, tweet_id):
@@ -284,19 +299,37 @@ def get_maxFavorited():
     return jsonify({'Statuses': response_data}), 200
 
 
-@app.errorhandler(404)
-def custom404(error):
-    return (
-        jsonify(
-            {
-                'name': API_NAME,
-                'status': 'Not Found',
-                'code': 404,
-                'message': error.description,
-            }
-        ),
-        404,
-    )
+@app.route('/api/users', methods=['POST'])
+def add_new_user():
+    if not request.json:
+        abort(400)
+    
+    name = request.json.get('name')
+    username = request.json.get('username')
+    email = request.json.get('email')
+    password = request.json.get('password')
+
+    if not name or not username or not email or not password:
+        abort(400)
+
+    if User.query.filter_by(username=username).first():
+        abort(400, 'Username is already taken')
+    
+    if User.query.filter_by(email=email).first():
+        abort(400, 'The Email Adress is already using')
+    
+    user = User(name=name, username=username, email=email)
+    user.set_password(password)
+    
+    db.session.add(user)
+    db.session.commit()
+    data={
+        "username":user.username,
+        "name":user.name,
+        "email":user.email,
+        "id":user.id
+    }
+    return jsonify(data),201
 
 
 @app.errorhandler(400)
@@ -311,6 +344,21 @@ def custom400(error):
             }
         ),
         400,
+    )
+
+
+@app.errorhandler(404)
+def custom404(error):
+    return (
+        jsonify(
+            {
+                'name': API_NAME,
+                'status': 'Not Found',
+                'code': 404,
+                'message': error.description,
+            }
+        ),
+        404,
     )
 
 
