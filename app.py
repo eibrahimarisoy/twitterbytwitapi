@@ -158,6 +158,15 @@ class User(db.Model):
         user = User.query.get(data["id"])
         return user
 
+    def to_dict(self):
+        response_data = {
+            "id": self.id,
+            "name": self.name,
+            "username": self.username,
+            "email": self.email,
+        }
+        return response_data
+
 
 def add_Tweet(item, tweet_id):
 
@@ -209,6 +218,9 @@ def authentication_required(f):
         user = User.verify_auth_token(token)
         if not user:
             abort(403, "You are forbidden to see this page")
+        if f.__name__ == "standart_search_tweets":
+            if not user.username == "admin":
+                abort(403, "You are forbidden to see this page")
         g.user = user
         return f(*args, **kwargs)
 
@@ -230,7 +242,7 @@ def get_validate_token():
 
 
 # Sadece Admin tarafından kullanılacak
-@app.route("/api/addTweettoDB", methods=["POST"])
+@app.route("/v1api/addTweettoDB", methods=["POST"])
 @authentication_required
 def standart_search_tweets():
     app.logger.info(
@@ -280,7 +292,8 @@ def standart_search_tweets():
     return jsonify({f"{counter} tweet": "OK"}), 200
 
 
-@app.route("/api/tweets", methods=["GET"])
+@app.route("/v1/api/tweets", methods=["GET"])
+@authentication_required
 def get_all_tweet_from_db():
     app.logger.info(
         f"user-agent : {request.user_agent} ==> base_url : {request.base_url} ==> method : {request.endpoint}"
@@ -294,7 +307,8 @@ def get_all_tweet_from_db():
     return jsonify({"Statuses": data_response}), 200
 
 
-@app.route("/api/tweet/<id>", methods=["GET"])
+@app.route("/v1/api/tweet/<id>", methods=["GET"])
+@authentication_required
 def get_tweet_from_db(id):
     app.logger.info(
         f"user-agent : {request.user_agent} ==> base_url : {request.base_url} ==> endpoint : {request.endpoint} ==> id : {id} ==> method : {request.method}"
@@ -307,7 +321,8 @@ def get_tweet_from_db(id):
     return jsonify({"Statuses": tweet.to_dict()}), 200
 
 
-@app.route("/api/hashtags/<hashtag>", methods=["GET"])
+@app.route("/v1/api/hashtags/<hashtag>", methods=["GET"])
+@authentication_required
 def get_tweet_has_hashtags(hashtag):
     app.logger.info(
         f"user-agent : {request.user_agent} ==> base_url : {request.base_url} ==> endpoint : {request.endpoint} ==> hashtag : {hashtag} ==> method : {request.method}"
@@ -325,7 +340,8 @@ def get_tweet_has_hashtags(hashtag):
     return jsonify({"Statuses": response_data}), 200
 
 
-@app.route("/api/tweets/maxFavorited", methods=["GET"])
+@app.route("/v1/api/tweets/maxFavorited", methods=["GET"])
+@authentication_required
 def get_maxFavorited():
     app.logger.info(
         f"user-agent : {request.user_agent} ==> base_url : {request.base_url} ==> endpoint : {request.endpoint} ==> method : {request.method}"
@@ -339,7 +355,7 @@ def get_maxFavorited():
     return jsonify({"Statuses": response_data}), 200
 
 
-@app.route("/api/users", methods=["POST"])
+@app.route("/v1/api/adduser", methods=["POST"])
 def add_new_user():
     if not request.json:
         abort(400)
@@ -374,7 +390,7 @@ def add_new_user():
     return jsonify(data), 201
 
 
-@app.route("/api/login", methods=["POST"])
+@app.route("/v1/api/login", methods=["POST"])
 @auth.verify_password
 def verify_password():
     g.user = None
@@ -414,6 +430,101 @@ def verify_password():
         }
         return jsonify(data), 200
     abort(400)
+
+
+@app.route("/v1/api/users", methods=["GET"])
+def get_users():
+    users = User.query.all()
+    if not users:
+        abort(404)
+    data_response = []
+
+    for user in users:
+        data_response.append(user.to_dict())
+
+    return jsonify({"Users": data_response}), 200
+
+
+@app.route("/v1/api/user/<int:id>", methods=["GET"])
+def get_user(id):
+    user = User.query.filter_by(id=id).first()
+    if not user:
+        abort(404)
+
+    return jsonify(user.to_dict()), 200
+
+
+@app.route("/v1/api/user/<int:id>", methods=["DELETE"])
+@authentication_required
+def delete_user(id):
+    user = User.query.filter_by(id=id).first()
+    if not user:
+        abort(404)
+
+    db.session.delete(user)
+    db.session.commit()
+
+    return jsonify(user.to_dict()), 200
+
+
+@app.route("/v1/api/user/<int:id>", methods=["PATCH"])
+@authentication_required
+def update_user(id):
+    user = User.query.filter_by(id=id).first()
+    if not user:
+        abort(404)
+
+    if not request.json:
+        abort(400)
+
+    username = request.json.get("username")
+    name = request.json.get("name")
+    email = request.json.get("email")
+
+    if username:
+        if User.query.filter_by(username=username).first():
+            abort(400, "Username is already in use.")
+        user.username = username
+
+    if name:
+        user.name = name
+
+    if email:
+        if User.query.filter_by(email=email).first():
+            abort(400, "Email is already in use.")
+        user.email = email
+
+    db.session.commit()
+
+    return (
+        jsonify({"code": 200, "status": "OK", "message": "User profile updated."}),
+        200,
+    )
+
+
+@app.route("/v1/api/user/passwordChange/<int:id>", methods=["PATCH"])
+@authentication_required
+def password_change(id):
+    user = User.query.filter_by(id=id).first()
+    if not user:
+        abort(400)
+
+    if g.user.id is not id:
+        abort(401)
+
+    last_password = request.json.get("lastpassword")
+    new_password = request.json.get("newpassword")
+
+    if not user.verify_password(last_password):
+        abort(400, "Password not correct")
+
+    user.hash_password(new_password)
+    db.session.commit()
+
+    return (
+        jsonify({"code": 200, "status": "OK", "message": "User password updated."}),
+        200,
+    )
 
 
 @app.errorhandler(400)
@@ -477,5 +588,5 @@ def custom404(error):
 
 
 if __name__:
-    get_validate_token()
+    # get_validate_token()
     app.run(host="127.0.0.1", port=5000, debug=True)
