@@ -6,6 +6,7 @@ import requests
 from datetime import date
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, abort, g
+from flask_caching import Cache
 from flask_httpauth import HTTPBasicAuth
 from flask_sqlalchemy import SQLAlchemy
 from functools import wraps
@@ -25,9 +26,12 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY")
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DB_CONNECTION_STRING")
 app.config["SQLALCHEMY_COMMIT_ON_TEARDOWN"] = True
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = True
+app.config["CACHE_TYPE"] = os.environ.get("CACHE_TYPE")
+app.config["CACHE_DEFAULT_TYPE"] = os.environ.get("CACHE_DEFAULT_TYPE")
 
 db = SQLAlchemy(app)
 API_NAME = os.environ.get("API_NAME")
+cache = Cache(app)
 
 client_key = os.environ.get("CONSUMER_KEY")
 client_secret = os.environ.get("CONSUMER_SECRET")
@@ -213,18 +217,41 @@ def authentication_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         token = request.headers.get("Authorization")
-        if not token:
-            abort(403, "You are forbidden to see this page")
         user = User.verify_auth_token(token)
-        if not user:
+        if not token or not user:
             abort(403, "You are forbidden to see this page")
+
         if f.__name__ == "standart_search_tweets":
             if not user.username == "admin":
                 abort(403, "You are forbidden to see this page")
+
         g.user = user
         return f(*args, **kwargs)
 
     return decorated_function
+
+
+def get_paginated_list(results, url, start, limit):
+    count = len(results)
+    # make response
+    response_data = {}
+    response_data["start"] = start
+    response_data["limit"] = limit
+    response_data["count"] = count
+    if start - limit > 0:
+        response_data["previous"] = url + f"?start={start-limit}&limit={limit}"
+    if start + limit > count:
+        limit = count - start
+    else:
+        response_data["next"] = url + f"?start={start+limit}&limit={limit}"
+
+    statuses = []
+
+    for i in range((start - 1), start + limit - 1):
+        statuses.append(results[i].to_dict())
+        response_data["Statuses"] = statuses
+
+    return response_data
 
 
 def get_validate_token():
@@ -242,7 +269,7 @@ def get_validate_token():
 
 
 # Sadece Admin tarafından kullanılacak
-@app.route("/v1api/addTweettoDB", methods=["POST"])
+@app.route("/v1/api/addTweettoDB", methods=["POST"])
 @authentication_required
 def standart_search_tweets():
     app.logger.info(
@@ -292,28 +319,33 @@ def standart_search_tweets():
     return jsonify({f"{counter} tweet": "OK"}), 200
 
 
-@app.route("/v1/api/tweets", methods=["GET"])
-@authentication_required
+@app.route("/v1/api/tweets/page", methods=["GET"])
 def get_all_tweet_from_db():
     app.logger.info(
         f"user-agent : {request.user_agent} ==> base_url : {request.base_url} ==> method : {request.endpoint}"
     )
     tweets = Tweet.query.all()
-    data_response = []
+    if not tweets:
+        abort(404)
 
-    for tweet in tweets:
-        data_response.append(tweet.to_dict())
+    return jsonify(
+        get_paginated_list(
+            tweets,
+            "/v1/api/tweets/page",
+            start=int(request.args.get("start")),
+            limit=int(request.args.get("limit")),
+        )
+    )
 
-    return jsonify({"Statuses": data_response}), 200
 
-
-@app.route("/v1/api/tweet/<id>", methods=["GET"])
+@app.route("/v1/api/tweet/<tweetid>", methods=["GET"])
 @authentication_required
-def get_tweet_from_db(id):
+@cache.cached(timeout=50)
+def get_tweet_from_db(tweetid):
     app.logger.info(
         f"user-agent : {request.user_agent} ==> base_url : {request.base_url} ==> endpoint : {request.endpoint} ==> id : {id} ==> method : {request.method}"
     )
-    tweet = Tweet.query.filter_by(tweet_id=id).first()
+    tweet = Tweet.query.filter_by(tweet_id=tweetid).first()
 
     if not tweet:
         abort(404, "Tweet not found")
@@ -323,6 +355,7 @@ def get_tweet_from_db(id):
 
 @app.route("/v1/api/hashtags/<hashtag>", methods=["GET"])
 @authentication_required
+@cache.cached(timeout=50)
 def get_tweet_has_hashtags(hashtag):
     app.logger.info(
         f"user-agent : {request.user_agent} ==> base_url : {request.base_url} ==> endpoint : {request.endpoint} ==> hashtag : {hashtag} ==> method : {request.method}"
@@ -341,6 +374,7 @@ def get_tweet_has_hashtags(hashtag):
 
 
 @app.route("/v1/api/tweets/maxFavorited", methods=["GET"])
+@cache.cached(timeout=50)
 @authentication_required
 def get_maxFavorited():
     app.logger.info(
@@ -416,8 +450,6 @@ def verify_password():
 
     elif request.json.get("username") and request.json.get("password"):
         user = User.query.filter_by(username=request.json.get("username")).first()
-        if not user:
-            abort(401, "Username or password is invalid.")
         if not user or not user.verify_password(request.json.get("password")):
             abort(401, "Username or password is invalid.")
         g.user = user
@@ -433,6 +465,7 @@ def verify_password():
 
 
 @app.route("/v1/api/users", methods=["GET"])
+@cache.cached(timeout=50)
 def get_users():
     users = User.query.all()
     if not users:
@@ -446,6 +479,7 @@ def get_users():
 
 
 @app.route("/v1/api/user/<int:id>", methods=["GET"])
+@cache.cached(timeout=50)
 def get_user(id):
     user = User.query.filter_by(id=id).first()
     if not user:
