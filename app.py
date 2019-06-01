@@ -3,6 +3,7 @@ import json
 import os
 import logging
 import requests
+import uuid
 from datetime import date
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, abort, g
@@ -17,6 +18,7 @@ from itsdangerous import (
 )
 from logging.config import fileConfig
 from passlib.apps import custom_app_context as pwd_context
+
 
 app = Flask(__name__)
 load_dotenv()
@@ -135,10 +137,12 @@ class Tweet_Url(db.Model):
 class User(db.Model):
     __tablename__ = "User"
     id = db.Column(db.Integer, primary_key=True)
+    public_id = db.Column(db.String(50), unique=True)
     name = db.Column(db.String(80), nullable=False)
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password = db.Column(db.String(120))
+    admin = db.Column(db.Boolean)
 
     def hash_password(self, password):
         self.password = pwd_context.encrypt(password)
@@ -148,7 +152,7 @@ class User(db.Model):
 
     def generate_auth_token(self, expiration=100):
         s = Serializer(os.environ.get("SECRET_KEY"), expires_in=expiration)
-        return s.dumps({"id": self.id})
+        return s.dumps({"public_id": self.public_id})
 
     @staticmethod
     def verify_auth_token(token):
@@ -159,7 +163,7 @@ class User(db.Model):
             return None
         except BadSignature:
             return None
-        user = User.query.get(data["id"])
+        user = User.query.filter_by(public_id=data["public_id"]).first()
         return user
 
     def to_dict(self):
@@ -168,6 +172,8 @@ class User(db.Model):
             "name": self.name,
             "username": self.username,
             "email": self.email,
+            "public_id": self.public_id,
+            "admin": self.admin,
         }
         return response_data
 
@@ -221,8 +227,8 @@ def authentication_required(f):
         if not token or not user:
             abort(403, "You are forbidden to see this page")
 
-        if f.__name__ == "standart_search_tweets":
-            if not user.username == "admin":
+        if f.__name__ == "standart_search_tweets" or "promote_user":
+            if not user.admin:
                 abort(403, "You are forbidden to see this page")
 
         g.user = user
@@ -390,7 +396,7 @@ def get_maxFavorited():
 
 
 @app.route("/v1/api/adduser", methods=["POST"])
-def add_new_user():
+def create_user():
     if not request.json:
         abort(400)
 
@@ -410,7 +416,13 @@ def add_new_user():
     if User.query.filter_by(email=email).first():
         abort(400, "The Email Adress is already using")
 
-    user = User(name=name, username=username, email=email)
+    user = User(
+        public_id=str(uuid.uuid4()),
+        name=name,
+        username=username,
+        email=email,
+        admin=False,
+    )
     user.hash_password(password)
 
     db.session.add(user)
@@ -420,6 +432,7 @@ def add_new_user():
         "name": user.name,
         "email": user.email,
         "id": user.id,
+        "public_id": user.public_id,
     }
     return jsonify(data), 201
 
@@ -445,6 +458,7 @@ def verify_password():
             "name": g.user.name,
             "email": g.user.email,
             "token": g.user.generate_auth_token(9999),
+            "public_id": g.user.public_id,
         }
         return jsonify(data), 200
 
@@ -459,6 +473,7 @@ def verify_password():
             "name": g.user.name,
             "email": g.user.email,
             "token": g.user.generate_auth_token(9999).decode("utf-8"),
+            "public_id": g.user.public_id,
         }
         return jsonify(data), 200
     abort(400)
@@ -478,20 +493,36 @@ def get_users():
     return jsonify({"Users": data_response}), 200
 
 
-@app.route("/v1/api/user/<int:id>", methods=["GET"])
+@app.route("/v1/api/user/<public_id>", methods=["GET"])
 @cache.cached(timeout=50)
-def get_user(id):
-    user = User.query.filter_by(id=id).first()
+def get_user(public_id):
+    user = User.query.filter_by(public_id=public_id).first()
     if not user:
         abort(404)
 
     return jsonify(user.to_dict()), 200
 
 
-@app.route("/v1/api/user/<int:id>", methods=["DELETE"])
+@app.route("/v1/api/user/<public_id>", methods=["PUT"])
 @authentication_required
-def delete_user(id):
-    user = User.query.filter_by(id=id).first()
+def promote_user(public_id):
+    user = User.query.filter_by(public_id=public_id).first()
+
+    if not user:
+        abort(404)
+
+    user.admin = True
+
+    return (
+        jsonify({"code": 200, "status": "OK", "message": "User profile updated."}),
+        200,
+    )
+
+
+@app.route("/v1/api/user/<public_id>", methods=["DELETE"])
+@authentication_required
+def delete_user(public_id):
+    user = User.query.filter_by(public_id=public_id).first()
     if not user:
         abort(404)
 
@@ -501,10 +532,10 @@ def delete_user(id):
     return jsonify(user.to_dict()), 200
 
 
-@app.route("/v1/api/user/<int:id>", methods=["PATCH"])
+@app.route("/v1/api/user/<public_id>", methods=["PATCH"])
 @authentication_required
-def update_user(id):
-    user = User.query.filter_by(id=id).first()
+def update_user(public_id):
+    user = User.query.filter_by(public_id=public_id).first()
     if not user:
         abort(404)
 
@@ -536,14 +567,14 @@ def update_user(id):
     )
 
 
-@app.route("/v1/api/user/passwordChange/<int:id>", methods=["PATCH"])
+@app.route("/v1/api/user/passwordChange/<public_id>", methods=["PATCH"])
 @authentication_required
-def password_change(id):
-    user = User.query.filter_by(id=id).first()
+def password_change(public_id):
+    user = User.query.filter_by(public_id=public_id).first()
     if not user:
         abort(400)
 
-    if g.user.id is not id:
+    if g.user.public_id is not public_id:
         abort(401)
 
     last_password = request.json.get("lastpassword")
@@ -622,5 +653,5 @@ def custom404(error):
 
 
 if __name__:
-    # get_validate_token()
+    get_validate_token()
     app.run(host="127.0.0.1", port=5000, debug=True)
